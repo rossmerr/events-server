@@ -19,16 +19,20 @@ import (
 const _ = grpc.SupportPackageIsVersion7
 
 const (
-	DomainEventsService_Publish_FullMethodName   = "/events.v1.DomainEventsService/Publish"
-	DomainEventsService_Subscribe_FullMethodName = "/events.v1.DomainEventsService/Subscribe"
+	DomainEventsService_Stream_FullMethodName          = "/events.v1.DomainEventsService/Stream"
+	DomainEventsService_Publish_FullMethodName         = "/events.v1.DomainEventsService/Publish"
+	DomainEventsService_Subscribe_FullMethodName       = "/events.v1.DomainEventsService/Subscribe"
+	DomainEventsService_Acknowledgement_FullMethodName = "/events.v1.DomainEventsService/Acknowledgement"
 )
 
 // DomainEventsServiceClient is the client API for DomainEventsService service.
 //
 // For semantics around ctx use and closing/ending streaming RPCs, please refer to https://pkg.go.dev/google.golang.org/grpc/?tab=doc#ClientConn.NewStream.
 type DomainEventsServiceClient interface {
+	Stream(ctx context.Context, in *StreamRequest, opts ...grpc.CallOption) (*StreamResponse, error)
 	Publish(ctx context.Context, opts ...grpc.CallOption) (DomainEventsService_PublishClient, error)
 	Subscribe(ctx context.Context, in *SubscribeRequest, opts ...grpc.CallOption) (DomainEventsService_SubscribeClient, error)
+	Acknowledgement(ctx context.Context, opts ...grpc.CallOption) (DomainEventsService_AcknowledgementClient, error)
 }
 
 type domainEventsServiceClient struct {
@@ -37,6 +41,15 @@ type domainEventsServiceClient struct {
 
 func NewDomainEventsServiceClient(cc grpc.ClientConnInterface) DomainEventsServiceClient {
 	return &domainEventsServiceClient{cc}
+}
+
+func (c *domainEventsServiceClient) Stream(ctx context.Context, in *StreamRequest, opts ...grpc.CallOption) (*StreamResponse, error) {
+	out := new(StreamResponse)
+	err := c.cc.Invoke(ctx, DomainEventsService_Stream_FullMethodName, in, out, opts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
 }
 
 func (c *domainEventsServiceClient) Publish(ctx context.Context, opts ...grpc.CallOption) (DomainEventsService_PublishClient, error) {
@@ -105,12 +118,45 @@ func (x *domainEventsServiceSubscribeClient) Recv() (*SubscribeResponse, error) 
 	return m, nil
 }
 
+func (c *domainEventsServiceClient) Acknowledgement(ctx context.Context, opts ...grpc.CallOption) (DomainEventsService_AcknowledgementClient, error) {
+	stream, err := c.cc.NewStream(ctx, &DomainEventsService_ServiceDesc.Streams[2], DomainEventsService_Acknowledgement_FullMethodName, opts...)
+	if err != nil {
+		return nil, err
+	}
+	x := &domainEventsServiceAcknowledgementClient{stream}
+	return x, nil
+}
+
+type DomainEventsService_AcknowledgementClient interface {
+	Send(*AcknowledgementRequest) error
+	Recv() (*AcknowledgementResponse, error)
+	grpc.ClientStream
+}
+
+type domainEventsServiceAcknowledgementClient struct {
+	grpc.ClientStream
+}
+
+func (x *domainEventsServiceAcknowledgementClient) Send(m *AcknowledgementRequest) error {
+	return x.ClientStream.SendMsg(m)
+}
+
+func (x *domainEventsServiceAcknowledgementClient) Recv() (*AcknowledgementResponse, error) {
+	m := new(AcknowledgementResponse)
+	if err := x.ClientStream.RecvMsg(m); err != nil {
+		return nil, err
+	}
+	return m, nil
+}
+
 // DomainEventsServiceServer is the server API for DomainEventsService service.
 // All implementations must embed UnimplementedDomainEventsServiceServer
 // for forward compatibility
 type DomainEventsServiceServer interface {
+	Stream(context.Context, *StreamRequest) (*StreamResponse, error)
 	Publish(DomainEventsService_PublishServer) error
 	Subscribe(*SubscribeRequest, DomainEventsService_SubscribeServer) error
+	Acknowledgement(DomainEventsService_AcknowledgementServer) error
 	mustEmbedUnimplementedDomainEventsServiceServer()
 }
 
@@ -118,11 +164,17 @@ type DomainEventsServiceServer interface {
 type UnimplementedDomainEventsServiceServer struct {
 }
 
+func (UnimplementedDomainEventsServiceServer) Stream(context.Context, *StreamRequest) (*StreamResponse, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method Stream not implemented")
+}
 func (UnimplementedDomainEventsServiceServer) Publish(DomainEventsService_PublishServer) error {
 	return status.Errorf(codes.Unimplemented, "method Publish not implemented")
 }
 func (UnimplementedDomainEventsServiceServer) Subscribe(*SubscribeRequest, DomainEventsService_SubscribeServer) error {
 	return status.Errorf(codes.Unimplemented, "method Subscribe not implemented")
+}
+func (UnimplementedDomainEventsServiceServer) Acknowledgement(DomainEventsService_AcknowledgementServer) error {
+	return status.Errorf(codes.Unimplemented, "method Acknowledgement not implemented")
 }
 func (UnimplementedDomainEventsServiceServer) mustEmbedUnimplementedDomainEventsServiceServer() {}
 
@@ -135,6 +187,24 @@ type UnsafeDomainEventsServiceServer interface {
 
 func RegisterDomainEventsServiceServer(s grpc.ServiceRegistrar, srv DomainEventsServiceServer) {
 	s.RegisterService(&DomainEventsService_ServiceDesc, srv)
+}
+
+func _DomainEventsService_Stream_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(StreamRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(DomainEventsServiceServer).Stream(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: DomainEventsService_Stream_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(DomainEventsServiceServer).Stream(ctx, req.(*StreamRequest))
+	}
+	return interceptor(ctx, in, info, handler)
 }
 
 func _DomainEventsService_Publish_Handler(srv interface{}, stream grpc.ServerStream) error {
@@ -184,13 +254,44 @@ func (x *domainEventsServiceSubscribeServer) Send(m *SubscribeResponse) error {
 	return x.ServerStream.SendMsg(m)
 }
 
+func _DomainEventsService_Acknowledgement_Handler(srv interface{}, stream grpc.ServerStream) error {
+	return srv.(DomainEventsServiceServer).Acknowledgement(&domainEventsServiceAcknowledgementServer{stream})
+}
+
+type DomainEventsService_AcknowledgementServer interface {
+	Send(*AcknowledgementResponse) error
+	Recv() (*AcknowledgementRequest, error)
+	grpc.ServerStream
+}
+
+type domainEventsServiceAcknowledgementServer struct {
+	grpc.ServerStream
+}
+
+func (x *domainEventsServiceAcknowledgementServer) Send(m *AcknowledgementResponse) error {
+	return x.ServerStream.SendMsg(m)
+}
+
+func (x *domainEventsServiceAcknowledgementServer) Recv() (*AcknowledgementRequest, error) {
+	m := new(AcknowledgementRequest)
+	if err := x.ServerStream.RecvMsg(m); err != nil {
+		return nil, err
+	}
+	return m, nil
+}
+
 // DomainEventsService_ServiceDesc is the grpc.ServiceDesc for DomainEventsService service.
 // It's only intended for direct use with grpc.RegisterService,
 // and not to be introspected or modified (even as a copy)
 var DomainEventsService_ServiceDesc = grpc.ServiceDesc{
 	ServiceName: "events.v1.DomainEventsService",
 	HandlerType: (*DomainEventsServiceServer)(nil),
-	Methods:     []grpc.MethodDesc{},
+	Methods: []grpc.MethodDesc{
+		{
+			MethodName: "Stream",
+			Handler:    _DomainEventsService_Stream_Handler,
+		},
+	},
 	Streams: []grpc.StreamDesc{
 		{
 			StreamName:    "Publish",
@@ -201,6 +302,12 @@ var DomainEventsService_ServiceDesc = grpc.ServiceDesc{
 			StreamName:    "Subscribe",
 			Handler:       _DomainEventsService_Subscribe_Handler,
 			ServerStreams: true,
+		},
+		{
+			StreamName:    "Acknowledgement",
+			Handler:       _DomainEventsService_Acknowledgement_Handler,
+			ServerStreams: true,
+			ClientStreams: true,
 		},
 	},
 	Metadata: "events/v1/domain.proto",

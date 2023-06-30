@@ -7,16 +7,20 @@ import (
 	"io"
 
 	domain "github.com/rossmerr/events-server/domain/events/v1"
+	server "github.com/rossmerr/events-server/domain/server/v1"
+	"github.com/rossmerr/events-server/storage"
+
 	log "github.com/sirupsen/logrus"
 	pb "go.etcd.io/etcd/api/v3/etcdserverpb"
 	"go.etcd.io/etcd/server/v3/etcdserver"
 	"go.etcd.io/etcd/server/v3/lease"
-	"go.etcd.io/etcd/server/v3/mvcc"
 )
 
 type domainServer struct {
 	domain.UnimplementedDomainEventsServiceServer
-	server *etcdserver.EtcdServer
+	server      *etcdserver.EtcdServer
+	messageRepo storage.MessageRepository
+	streamRepo  storage.StreamRepository
 }
 
 func NewDomainServer(server *etcdserver.EtcdServer) domain.DomainEventsServiceServer {
@@ -24,10 +28,26 @@ func NewDomainServer(server *etcdserver.EtcdServer) domain.DomainEventsServiceSe
 		server: server,
 	}
 }
+func (s *domainServer) Stream(ctx context.Context, request *domain.StreamRequest) (*domain.StreamResponse, error) {
+
+	log.Debug(fmt.Sprintf("domainServer.Stream  %+v", request.Subject))
+
+	response := &domain.StreamResponse{}
+
+	id, err := s.streamRepo.Save(&server.Stream{
+		Name:       request.Name,
+		Subject:    request.Subject,
+		Replicas:   request.Replicas,
+		MaxDeliver: request.MaxDeliver,
+	})
+
+	response.Id = id
+
+	return response, err
+
+}
 
 func (s *domainServer) Publish(stream domain.DomainEventsService_PublishServer) error {
-	log.Debug(fmt.Sprintf("domainServer.Publish  %+v", stream))
-
 	for {
 		publish, err := stream.Recv()
 		if err == io.EOF {
@@ -42,42 +62,59 @@ func (s *domainServer) Publish(stream domain.DomainEventsService_PublishServer) 
 			TTL: 0,
 		})
 
+		lease := lease.LeaseID(l.ID)
+
 		if err != nil {
 			return errors.Join(fmt.Errorf("domainServer.Publish"), err)
 		}
 
-		key := []byte(publish.Subject)
-		s.server.KV().Put(key, []byte(""), lease.LeaseID(l.ID))
+		log.Debug(fmt.Sprintf("domainServer.Publish  %+v", publish.Subject))
+
+		streams := s.streamRepo.Find(publish.Subject)
+
+		msg := &server.Message{
+			Id:      publish.Id,
+			Subject: publish.Subject,
+			Message: publish.Message,
+		}
+
+		for _, stream := range streams {
+			_, err := s.messageRepo.Save(msg, stream, lease)
+			if err != nil {
+				return errors.Join(fmt.Errorf("domainServer.Publish"), err)
+			}
+		}
+
 	}
 
 }
 
 func (s *domainServer) Subscribe(request *domain.SubscribeRequest, stream domain.DomainEventsService_SubscribeServer) error {
-	log.Debug(fmt.Sprintf("domainServer.Subscribe  %+v", request))
+	log.Debug(fmt.Sprintf("domainServer.Subscribe  %+v", request.Subject))
 
-	watchStream := s.server.KV().NewWatchStream()
-	defer watchStream.Close()
+	watchStream, signals := s.streamRepo.Watch(request.Subject)
 
-	key := []byte(request.Subject)
-
-	_, err := watchStream.Watch(mvcc.WatchID(0), key, key, 0)
-	if err != nil {
-		return errors.Join(fmt.Errorf("domainServer.Subscribe"), err)
-	}
-
-	response := <-watchStream.Chan()
-
-	for _, event := range response.Events {
-		subject := string(event.Kv.Key)
+	for msg := range watchStream {
 
 		message := &domain.SubscribeResponse{
-			Subject: subject,
+			Id:      msg.Id,
+			Message: msg.Message,
 		}
 
 		if err := stream.Send(message); err != nil {
+
+			if err != nil {
+				signals <- true
+			}
+
+			if err == io.EOF {
+				break
+			}
+
 			return errors.Join(fmt.Errorf("domainServer.Subscribe"), err)
 		}
 	}
 
 	return nil
+
 }
